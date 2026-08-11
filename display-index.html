@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no">
+<title>Product Display</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Display">
+<meta name="theme-color" content="#141210">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%232f5d50'/%3E%3Ctext x='50' y='64' font-size='46' text-anchor='middle' fill='white' font-family='sans-serif'%3ED%3C/text%3E%3C/svg%3E">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root{
+    --bg:#141210;
+    --ink:#f5f1ea;
+    --muted:#b7ada0;
+    --accent:#e8b26a;
+    --accent-strong:#2f5d50;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{ height:100%; overflow:hidden; background:var(--bg); }
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    color:var(--ink);
+    -webkit-tap-highlight-color:transparent;
+    width:100vw; height:100vh; height:100dvh;
+    position:relative;
+  }
+
+  #stage{ position:relative; width:100%; height:100%; }
+
+  .slide{
+    position:absolute; inset:0;
+    opacity:0; transition:opacity 900ms ease;
+    display:flex; flex-direction:column;
+  }
+  .slide.active{ opacity:1; z-index:1; }
+
+  .img-wrap{
+    flex:1; position:relative; overflow:hidden; background:#0d0c0a;
+  }
+  .img-wrap img{
+    width:100%; height:100%; object-fit:cover;
+    filter:saturate(1.02);
+  }
+  .img-wrap.no-image{ display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:15px;}
+  .fade-top{
+    position:absolute; left:0; right:0; top:0; height:40%;
+    background:linear-gradient(to bottom, rgba(0,0,0,.45), rgba(0,0,0,0));
+    pointer-events:none;
+  }
+
+  .info{
+    padding:22px 26px calc(26px + env(safe-area-inset-bottom));
+    background:linear-gradient(to top, rgba(0,0,0,.55), rgba(0,0,0,0) 140%);
+    position:absolute; left:0; right:0; bottom:0;
+  }
+  .info .eyebrow{
+    font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--accent);
+    font-weight:700; margin-bottom:6px;
+  }
+  .info h1{
+    font-size:clamp(22px, 6vw, 40px); font-weight:800; line-height:1.15; margin-bottom:8px;
+    text-shadow:0 2px 12px rgba(0,0,0,.5);
+  }
+  .info p.desc{
+    font-size:clamp(13px, 3vw, 16px); color:var(--muted); max-width:640px; line-height:1.5; margin-bottom:14px;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+  }
+  .price-row{ display:flex; align-items:baseline; gap:12px; }
+  .price-now{ font-size:clamp(24px, 6vw, 38px); font-weight:800; color:var(--accent); }
+  .price-old{ font-size:clamp(15px, 4vw, 20px); color:var(--muted); text-decoration:line-through; }
+
+  .progress-track{
+    position:absolute; top:calc(14px + env(safe-area-inset-top)); left:20px; right:20px;
+    display:flex; gap:6px; z-index:5;
+  }
+  .progress-seg{
+    flex:1; height:3px; background:rgba(255,255,255,.25); border-radius:3px; overflow:hidden;
+  }
+  .progress-seg .fill{
+    height:100%; width:0%; background:var(--accent); border-radius:3px;
+  }
+  .progress-seg.done .fill{ width:100%; transition:none; }
+  .progress-seg.current .fill{ width:0%; transition:width linear; }
+
+  .empty-state{
+    position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center; padding:30px; color:var(--muted); gap:8px;
+  }
+  .empty-state .glyph{ font-size:44px; }
+  .empty-state h2{ color:var(--ink); font-size:20px; }
+
+  .conn-dot{
+    position:fixed; bottom:calc(10px + env(safe-area-inset-bottom)); right:12px;
+    width:8px; height:8px; border-radius:50%; background:#4caf7d; opacity:.6; z-index:10;
+  }
+  .conn-dot.off{ background:#c0453a; }
+</style>
+</head>
+<body>
+
+<div id="stage"></div>
+<div class="progress-track" id="progressTrack"></div>
+<div class="conn-dot" id="connDot"></div>
+
+<script>
+const SUPABASE_URL = "https://zlknqthxjimngofrlxvd.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inpsa25xdGh4amltbmdvZnJseHZkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ2NjUyODgsImV4cCI6MjEwMDI0MTI4OH0.t1TdTcH7xYlcYMufKHwfIKoLe0BBsfRDuIWk5Z7MRJ8";
+const SLIDE_SECONDS = 5;
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const symbols = { BDT:'৳', USD:'$', EUR:'€', BRL:'R$', GBP:'£', INR:'₹', SAR:'﷼', AED:'د.إ' };
+const sym = c => symbols[c] || (c ? c + ' ' : '৳');
+
+let products = [];
+let currentIndex = 0;
+let slideTimer = null;
+let progressStart = null;
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+async function fetchProducts(){
+  const { data, error } = await sb.from('products').select('*').order('id', {ascending:false});
+  if(error){ console.error(error); return; }
+  products = data || [];
+  renderStage();
+  restartCycle();
+}
+
+function renderStage(){
+  const stage = document.getElementById('stage');
+  const track = document.getElementById('progressTrack');
+
+  if(products.length === 0){
+    stage.innerHTML = `
+      <div class="empty-state">
+        <div class="glyph">🗂️</div>
+        <h2>No products yet</h2>
+        <p>Add products from the Admin Panel and they'll appear here automatically.</p>
+      </div>`;
+    track.innerHTML = '';
+    return;
+  }
+
+  if(currentIndex >= products.length) currentIndex = 0;
+
+  stage.innerHTML = products.map((p, i) => `
+    <div class="slide ${i === currentIndex ? 'active' : ''}" data-i="${i}">
+      <div class="img-wrap ${p.image_url ? '' : 'no-image'}">
+        ${p.image_url ? `<img src="${p.image_url}">` : 'No image'}
+        <div class="fade-top"></div>
+      </div>
+      <div class="info">
+        <div class="eyebrow">Featured</div>
+        <h1>${escapeHtml(p.name || '')}</h1>
+        ${p.description ? `<p class="desc">${escapeHtml(p.description)}</p>` : ''}
+        <div class="price-row">
+          ${p.offer
+            ? `<span class="price-now">${sym(p.currency)}${p.offer}</span><span class="price-old">${sym(p.currency)}${p.price}</span>`
+            : `<span class="price-now">${sym(p.currency)}${p.price ?? ''}</span>`}
+        </div>
+      </div>
+    </div>
+  `).join('');
+
+  track.innerHTML = products.map((p, i) => `
+    <div class="progress-seg ${i < currentIndex ? 'done' : ''} ${i === currentIndex ? 'current' : ''}" data-i="${i}">
+      <div class="fill"></div>
+    </div>
+  `).join('');
+}
+
+function goToSlide(i){
+  const slides = document.querySelectorAll('.slide');
+  slides.forEach(s => s.classList.toggle('active', Number(s.dataset.i) === i));
+
+  const segs = document.querySelectorAll('.progress-seg');
+  segs.forEach(seg => {
+    const si = Number(seg.dataset.i);
+    seg.classList.remove('current');
+    seg.classList.toggle('done', si < i);
+    const fill = seg.querySelector('.fill');
+    if(si < i){
+      fill.style.transition = 'none';
+      fill.style.width = '100%';
+    } else if(si > i){
+      fill.style.transition = 'none';
+      fill.style.width = '0%';
+    }
+  });
+  const currentSeg = document.querySelector(`.progress-seg[data-i="${i}"]`);
+  if(currentSeg){
+    currentSeg.classList.add('current');
+    const fill = currentSeg.querySelector('.fill');
+    fill.style.transition = 'none';
+    fill.style.width = '0%';
+    requestAnimationFrame(() => {
+      fill.style.transition = `width ${SLIDE_SECONDS}s linear`;
+      fill.style.width = '100%';
+    });
+  }
+}
+
+function restartCycle(){
+  if(slideTimer) clearInterval(slideTimer);
+  if(products.length === 0) return;
+  currentIndex = Math.min(currentIndex, products.length - 1);
+  goToSlide(currentIndex);
+  slideTimer = setInterval(() => {
+    currentIndex = (currentIndex + 1) % products.length;
+    goToSlide(currentIndex);
+  }, SLIDE_SECONDS * 1000);
+}
+
+/* Realtime sync: refresh whenever Admin Panel changes the products table */
+const channel = sb
+  .channel('products-display-sync')
+  .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, () => {
+    fetchProducts();
+  })
+  .subscribe(status => {
+    const dot = document.getElementById('connDot');
+    dot.classList.toggle('off', status !== 'SUBSCRIBED');
+  });
+
+/* Fallback: also poll every 30s in case realtime misses an event */
+setInterval(fetchProducts, 30000);
+
+fetchProducts();
+
+/* Keep screen awake if supported */
+if('wakeLock' in navigator){
+  navigator.wakeLock.request('screen').catch(()=>{});
+}
+</script>
+</body>
+</html>
